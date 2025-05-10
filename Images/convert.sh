@@ -1,4 +1,3 @@
-The following script breaks when a filename has spaces like: Screenshot 2025-01-07 at 5.39.27 PM.png
 #!/bin/bash
 
 # Color codes
@@ -25,16 +24,17 @@ VALID_FILTERS=(
     "charcoal" "sketch" "spread" "swirl" "polaroid" "oil-paint"
     "normalize" "equalize" "denoise"
 )
-
+auto_remove=true
 
 # Initialize an array to store base filenames
 declare -a processed_files=()
 
 # Help message
 usage() {
-    echo -e "${CYAN}Usage${NC}:   $0 [-i input_ext[,input_ext...]] -o output_ext [-q quality] [-f filter] [-opt]"
-    echo -e "${LIGHT_YELLOW}Formats${NC}: ${VALID_FORMATS[@]}"
-    echo -e "${LIGHT_YELLOW}Filters${NC}: ${VALID_FILTERS[*]}"
+    echo -e "${CYAN}Usage${NC}:   $0 [-i input_ext[,input_ext...]] -o output_ext [-r auto_remove] [-q quality] [-f filter] [-opt]"
+    echo -e "\n${LIGHT_YELLOW}Remove${NC}:   Auto remove source images after conversion (default: false)"
+    echo -e "${LIGHT_YELLOW}Formats${NC}:  ${VALID_FORMATS[@]}"
+    echo -e "${LIGHT_YELLOW}Filters${NC}:  ${VALID_FILTERS[*]}"
     echo -e "${LIGHT_YELLOW}Examples${NC}: $0 -o jpeg"
     echo -e "          $0 -i pdf -o png"
     echo -e "          $0 -i jpg,png -o webp"
@@ -190,6 +190,10 @@ while [[ $# -gt 0 ]]; do
         -o) OUTPUT_EXT="$2"; shift 2 ;;
         -q) QUALITY="$2"; shift 2 ;;
         -f) FILTER="$2"; shift 2 ;;
+        -r|--remove)
+            auto_remove="$2"
+            shift 2
+            ;;
         -opt) OPTIMIZE=true; shift 1 ;;
         -h|--help) usage ;;      # Show help and exit
         *) usage ;;              # Default: Show usage if an invalid option is provided
@@ -229,7 +233,7 @@ EXT_ARRAY=()
 if [[ -z "$INPUT_EXT" ]]; then
     for ext in "${VALID_FORMATS[@]}"; do
         shopt -s nullglob nocaseglob
-        files=( *."$ext" )
+        files=( Input/*."$ext" )
         if [[ ${#files[@]} -gt 0 ]]; then
             EXT_ARRAY+=("$ext")
         fi
@@ -264,13 +268,12 @@ shopt -s nullglob nocaseglob
 count=0
 
 for ext in "${EXT_ARRAY[@]}"; do
-    for file in *."$ext"; do
+    for file in Input/*."$ext"; do
         [[ -f "$file" ]] || continue
-        base="${file%.*}"
-        output="${base}.${OUTPUT_EXT}"
-
+        input=$(basename "$file" ".${input_ext}")
+        output="Output/${input}.${OUTPUT_EXT}"
         # Check if the base filename already exists in the processed_files array
-        if [[ " ${processed_files[@]} " =~ " ${base} " ]]; then
+        if [[ " ${processed_files[@]} " =~ " ${input} " ]]; then
             # If it exists, silently skip this file
             continue
         fi
@@ -278,27 +281,30 @@ for ext in "${EXT_ARRAY[@]}"; do
         # Check if output file already exists
         if [[ -f "$output" ]]; then
             echo -e "${RED}❌ Skipping:${NC} file '$output' already exists."
-            processed_files+=("$base")
+            processed_files+=("$input")
             continue  # Skip this file and move to the next
         fi
-        commands=( "$file" )
         # Apply the filter if specified
         filter_cmds=""
         if [[ -n "$FILTER" ]]; then
-            echo -e "${YELLOW}⚙️ Applying filter(s):${NC} $FILTER"
+            echo -e "${YELLOW}⚙️  Applying filter(s):${NC} $FILTER"
             filter_cmds=$(apply_filters "$FILTER")
         fi
 
         # Default conversion if no filter or enhancement is provided
-        echo -e "⚙️ ${YELLOW}Converting:${NC} \"$file\" → \"$output\""
+        echo -e "⚙️  ${YELLOW}Converting:${NC} \"$file\" → \"$output\""
         if magick "$file" $filter_cmds "$output"; then
             # Apply optimization if the flag is set
             if $OPTIMIZE; then
-                echo -e "${YELLOW}⚙️ Applying Optimizations ${NC}"
+                echo -e "${YELLOW}⚙️  Applying Optimizations ${NC}"
                 apply_optimizations "$output"
             fi
             echo -e "${GREEN}✅ Converted:${NC} $file → $output"
             ((count++))
+            if [[ $auto_remove = "true" ]]; then
+                echo -e "${GREEN}✅ Removed Source File:${NC} $file → $output"
+                rm "$file"
+            fi
         else
             echo -e "${RED}❌ Failed:${NC} $file"
         fi

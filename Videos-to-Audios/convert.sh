@@ -17,10 +17,12 @@ BITRATE="192k"  # Default to 192k bitrate
 # Validate video and audio container types
 VALID_VIDEO_EXTS=("mp4" "mkv" "avi" "mov" "flv" "webm")
 VALID_AUDIO_FORMATS=("mp3" "aac" "wav" "flac" "ogg")
+auto_remove=false
 
 # Help message
 usage() {
     echo -e "${CYAN}Usage${NC}:   $0 [-i input_ext] -o input_ext [-c audio_codec] [-b bitrate] [directory]"
+    echo -e "\n${LIGHT_YELLOW}Remove${NC}:   Auto remove source images after conversion (default: false)"
     echo -e "${LIGHT_YELLOW}Video Formats${NC}: ${VALID_VIDEO_EXTS[@]}"
     echo -e "${LIGHT_YELLOW}Audio Formats${NC}: ${VALID_AUDIO_FORMATS[*]}"
     echo -e "${LIGHT_YELLOW}Examples${NC}: $0 -v mp4"
@@ -39,6 +41,10 @@ while [[ $# -gt 0 ]]; do
         o) AUDIO_EXT="$2" shift 2 ;;
         c) AUDIO_CODEC="$2" shift 2 ;;
         b) BITRATE="$2" shift 2 ;;
+        -r|--remove)
+            auto_remove="$2"
+            shift 2
+            ;;
         -h|--help) usage ;;      # Show help and exit
         *) usage ;;              # Default: Show usage if an invalid option is provided
     esac
@@ -56,22 +62,28 @@ if [[ ! " ${VALID_AUDIO_FORMATS[@]} " =~ " ${AUDIO_EXT} " ]]; then
     exit 1
 fi
 
+TARGET_DIR="Input"
+
 # Loop through all video files in the specified directory
 shopt -s nullglob
 echo -e "${CYAN}Starting the conversion process...${NC}"
 
 count=0
-for file in *."$VIDEO_EXT"; do
+for file in "$TARGET_DIR"/*; do
     if [[ -f "$file" ]]; then
         echo -e "${YELLOW}⚙️ Converting:${NC} $file → ${AUDIO_EXT}"
-
         # Build the output audio filename
-        output_file="${file%.*}.$AUDIO_EXT"
+        output_file="Output/$(basename -- "${file%.*}").${AUDIO_EXT}"
+        # output_file="${file%.*}.$AUDIO_EXT"
 
         # Run the conversion with the specified audio codec and bitrate
         if ffmpeg -i "$file" -vn -acodec "$AUDIO_CODEC" -ab "$BITRATE" "$output_file"; then
             echo -e "${GREEN}✅ Converted:${NC} $file → $output_file"
             count=$((count + 1))
+            if [[ $auto_remove  = "true" ]]; then
+                echo -e "${GREEN}✅ Removed Source File:${NC} $file → $output"
+                rm $file
+            fi
         else
             echo -e "${RED}❌ Failed:${NC} Conversion failed for $file"
         fi

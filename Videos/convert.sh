@@ -18,6 +18,7 @@ SUBTITLE_RANGE=""
 OUTPUT_EXT="mp4"  # Default to mp4
 SHOW_PROGRESS_ONLY=false
 POSITIONAL=()
+auto_remove=false
 
 useage() {
   echo -e "${CYAN}Usage:${NC} $0 [options]"
@@ -27,6 +28,7 @@ useage() {
   echo -e "  -s, --subtitles TRACKS Select subtitle tracks (e.g. 0 or 0-1), (default: all tracks)"
   echo -e "  -e, --ext EXTENSION Set the output file extension (default: mp4)"
   echo -e "  -p, --progress Show only progress (percentage) and suppress FFmpeg output"
+  echo -e "  -r, --Removes source video after conversion (default: false)"
   echo -e "  -h, --help  Show this help message"
   echo -e "${LIGHT_YELLOW}Example:${NC}"
   echo -e "  $0"
@@ -49,13 +51,17 @@ while [[ $# -gt 0 ]]; do
       SUBTITLE_RANGE="$2"
       shift 2
       ;;
-    -h|--help)
-      useage
-      exit 0
-      ;;
     -p|--progress)
       SHOW_PROGRESS_ONLY=true
       shift
+      ;;
+    -r|--remove)
+        auto_remove="$2"
+        shift 2
+        ;;
+    -h|--help)
+      useage
+      exit 0
       ;;
     -*)
       echo -e "${RED}Unknown option $1${NC}"
@@ -70,7 +76,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 set -- "${POSITIONAL[@]}"
-TARGET_DIR="$(pwd)"
+TARGET_DIR="Input"
 
 if [[ -z "$TARGET_DIR" ]]; then
   echo -e "${RED}Error: Directory path required${NC}"
@@ -138,7 +144,7 @@ for file in "$TARGET_DIR"/*; do
 
   if [[ " ${VALID_EXTENSIONS[*]} " =~ " $ext_lc " ]]; then
     filename=$(basename -- "$file")
-    output="${file%.*}.${OUTPUT_EXT}"
+    output="Output/$(basename -- "${file%.*}").${OUTPUT_EXT}"
 
     # Check if the output file already exists in the array
     if [[ " ${existing_files[@]} " =~ " ${output} " ]]; then
@@ -201,12 +207,20 @@ for file in "$TARGET_DIR"/*; do
             fi
           done
           echo -e "\n${CYAN}✅ Conversion Complete${NC}"
+          if [[ $auto_remove  = "true" ]]; then
+              echo -e "${GREEN}✅ Removed Source File:${NC} $file → $output"
+              rm $file
+          fi
       else
         # Standard output
         ffmpeg -hide_banner -y -i "$file" \
           "${video_args[@]}" "${audio_args[@]}" "${subtitle_args[@]}" \
           -c copy -strict -2 "$output"
         echo -e "${CYAN}✅ Conversion Complete${NC}"
+        if [[ $auto_remove  = "true" ]]; then
+            echo -e "${GREEN}✅ Removed Source File:${NC} $file → $output"
+            rm $file
+        fi
       fi
     fi
   fi
