@@ -1,0 +1,20 @@
+# Ignore Input and Output directories for all converters
+Documents/Input/
+Documents/Output/
+Images/Input/
+Images/Output/
+Videos/Input/
+Videos/Output/
+Videos-to-Audios/Input/
+Videos-to-Audios/Output/
+
+# Ignore log files
+**/conversion.log
+
+# Ignore macOS system files
+.DS_Store
+**/.DS_Store
+
+# Ignore Windows system files
+Thumbs.db
+**/Thumbs.db 

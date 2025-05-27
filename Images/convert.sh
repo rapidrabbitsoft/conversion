@@ -14,6 +14,7 @@ OUTPUT_EXT="jpeg"  # Default output format
 QUALITY=100
 OPTIMIZE=false
 FILTER=""
+MAX_PARALLEL_JOBS=4
 
 # Valid formats
 VALID_FORMATS=("jpg" "jpeg" "png" "gif" "bmp" "heic" "webp" "pdf" "tiff" "tif" "raw" "cr2" "nef" "arw")
@@ -29,17 +30,60 @@ auto_remove=true
 # Initialize an array to store base filenames
 declare -a processed_files=()
 
+# Log function
+log() {
+    local message="$1"
+    local level="${2:-INFO}"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    # Color codes for log levels
+    local color
+    case "$level" in
+        ERROR)
+            color="$RED"
+            ;;
+        WARNING)
+            color="$YELLOW"
+            ;;
+        SUCCESS)
+            color="$GREEN"
+            ;;
+        INFO)
+            color="$CYAN"
+            ;;
+        *)
+            color="$NC"
+            ;;
+    esac
+    
+    # Print colored output to terminal
+    echo -e "${color}[$timestamp] [$level] $message${NC}"
+}
+
+# Error handling
+set -e
+trap 'handle_error $? $LINENO' ERR
+
+handle_error() {
+    local exit_code=$1
+    local line_number=$2
+    log "Error occurred in script at line $line_number with exit code $exit_code" "ERROR"
+    exit $exit_code
+}
+
 # Help message
 usage() {
-    echo -e "${CYAN}Usage${NC}:   $0 [-i input_ext[,input_ext...]] -o output_ext [-r auto_remove] [-q quality] [-f filter] [-opt]"
-    echo -e "\n${LIGHT_YELLOW}Remove${NC}:   Auto remove source images after conversion (default: false)"
-    echo -e "${LIGHT_YELLOW}Formats${NC}:  ${VALID_FORMATS[@]}"
-    echo -e "${LIGHT_YELLOW}Filters${NC}:  ${VALID_FILTERS[*]}"
-    echo -e "${LIGHT_YELLOW}Examples${NC}: $0 -o jpeg"
-    echo -e "          $0 -i pdf -o png"
-    echo -e "          $0 -i jpg,png -o webp"
-    echo -e "          $0 -i pdf -o png -q 85"
-    echo -e "          $0 -i pdf -o png -q 85 -f sepia"
+    echo -e "${CYAN}Usage${NC}:   $0 [-i input_ext[,input_ext...]] -o output_ext [-r auto_remove] [-q quality] [-f filter] [-opt] [-j jobs]"
+    echo -e "\n${LIGHT_YELLOW}Options${NC}:"
+    echo -e "  -i  input_ext    : Input file extension(s) (comma-separated)"
+    echo -e "  -o  output_ext   : Output file extension (required)"
+    echo -e "  -q  quality      : Output quality (1-100, default: 100)"
+    echo -e "  -f  filter       : Apply image filter(s) (comma-separated)"
+    echo -e "  -r  auto_remove  : Auto remove source images (default: true)"
+    echo -e "  -j  jobs         : Number of parallel jobs (default: 4)"
+    echo -e "  -opt            : Enable optimization"
+    echo -e "  -h  or --help    : Display this help message"
+    echo -e "\n${LIGHT_YELLOW}Supported Formats${NC}: ${VALID_FORMATS[*]}"
+    echo -e "${LIGHT_YELLOW}Supported Filters${NC}: ${VALID_FILTERS[*]}"
     exit 1
 }
 
@@ -51,7 +95,7 @@ to_lowercase() {
 # Validate extension
 is_valid_output_extension() {
     local ext
-    ext=$(to_lowercase "$1")  # Convert extension to lowercase
+    ext=$(to_lowercase "$1")
     for valid_ext in "${VALID_FORMATS[@]}"; do
         if [[ "$ext" == "$valid_ext" ]]; then
             return 0
@@ -74,7 +118,7 @@ is_valid_input_extension() {
             fi
         done
         if [[ "$found" == false ]]; then
-            echo -e "${RED}Error:${NC} Invalid extension '$ext'. Supported: ${VALID_FORMATS[*]}"
+            log "Invalid extension '$ext'. Supported: ${VALID_FORMATS[*]}" "ERROR"
             exit 1
         fi
     done
@@ -94,7 +138,7 @@ is_valid_filter() {
             fi
         done
         if [[ "$found" == false ]]; then
-            echo -e "${RED}Error:${NC} Invalid filter '$filter'. Supported: ${VALID_FILTERS[*]}"
+            log "Invalid filter '$filter'. Supported: ${VALID_FILTERS[*]}" "ERROR"
             exit 1
         fi
     done
@@ -153,7 +197,7 @@ apply_filters() {
                 filter_cmds+=" -despeckle"
                 ;;
             *)
-                echo -e "${RED}Error:${NC} Unsupported filter '$filter'."
+                log "Unsupported filter '$filter'" "ERROR"
                 exit 1
                 ;;
         esac
@@ -168,22 +212,35 @@ apply_optimizations() {
     if [ -f "$file" ]; then
         case "$file" in
             *.jpg|*.jpeg)
-                jpegoptim --strip-all --strip-iptc --strip-exif --max=85 "$file"
+                if command -v jpegoptim &> /dev/null; then
+                    jpegoptim --strip-all --strip-iptc --strip-exif --max=85 "$file"
+                else
+                    log "jpegoptim not installed. Skipping JPEG optimization." "WARNING"
+                fi
                 ;;
             *.png)
-                optipng -o7 -strip all "$file"
-                pngcrush -brute -strip "$file" "$file"
+                if command -v optipng &> /dev/null && command -v pngcrush &> /dev/null; then
+                    optipng -o7 -strip all "$file"
+                    pngcrush -brute -strip "$file" "$file"
+                else
+                    log "optipng or pngcrush not installed. Skipping PNG optimization." "WARNING"
+                fi
                 ;;
             *.gif)
-                gifsicle -O3 --colors 256 --no-comments --minify "$file" -o "$file"
+                if command -v gifsicle &> /dev/null; then
+                    gifsicle -O3 --colors 256 --no-comments --minify "$file" -o "$file"
+                else
+                    log "gifsicle not installed. Skipping GIF optimization." "WARNING"
+                fi
                 ;;
             *)
-                echo -e "${YELLOW}⚠️  No optimization support for this format"
+                log "No optimization support for this format" "WARNING"
                 ;;
         esac
     fi
 }
 
+# Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -i) INPUT_EXT="$2"; shift 2 ;;
@@ -194,41 +251,76 @@ while [[ $# -gt 0 ]]; do
             auto_remove="$2"
             shift 2
             ;;
+        -j|--jobs)
+            MAX_PARALLEL_JOBS="$2"
+            shift 2
+            ;;
         -opt) OPTIMIZE=true; shift 1 ;;
-        -h|--help) usage ;;      # Show help and exit
-        *) usage ;;              # Default: Show usage if an invalid option is provided
+        -h|--help) usage ;;
+        *) usage ;;
     esac
 done
 
 # Validate output extension
 if [[ -z "$OUTPUT_EXT" ]]; then
-    echo -e "${RED}Error:${NC} Output extension is required."
+    log "Output extension is required" "ERROR"
     usage
 fi
 
-OUTPUT_EXT=$(to_lowercase "$OUTPUT_EXT")  # Convert output extension to lowercase
+OUTPUT_EXT=$(to_lowercase "$OUTPUT_EXT")
 
 if ! is_valid_output_extension "$OUTPUT_EXT"; then
-    echo -e "${RED}Error:${NC} Invalid output extension '$OUTPUT_EXT'. Supported: ${VALID_FORMATS[*]}"
+    log "Invalid output extension '$OUTPUT_EXT'. Supported: ${VALID_FORMATS[*]}" "ERROR"
     exit 1
 fi
 
 # Validate filter
 if [[ -n "$FILTER" ]]; then
     if ! is_valid_filter "$FILTER"; then
-        echo -e "${RED}Error:${NC} Invalid filter '$FILTER'. Supported filters: ${VALID_FILTERS[*]}"
+        log "Invalid filter '$FILTER'. Supported filters: ${VALID_FILTERS[*]}" "ERROR"
         exit 1
     fi
 fi
 
-
-# Check for magick
+# Check for required tools
 if ! command -v magick &> /dev/null; then
-    echo -e "${RED}Error:${NC} ImageMagick 'magick' is not installed."
+    log "ImageMagick 'magick' is not installed" "ERROR"
     exit 1
 fi
 
-# If input ext not provided, detect all valid images in the directory
+# Create output directory if it doesn't exist
+mkdir -p "Output"
+
+# Function to convert a single file
+convert_file() {
+    local input_file="$1"
+    local output_file="Output/$(basename "$input_file" | sed "s/\.[^.]*$/.$OUTPUT_EXT/")"
+    local filter_cmds=""
+    
+    if [[ -n "$FILTER" ]]; then
+        filter_cmds=$(apply_filters "$FILTER")
+    fi
+    
+    log "Converting: $input_file" "INFO"
+    
+    if magick "$input_file" -quality "$QUALITY" $filter_cmds "$output_file"; then
+        log "Successfully converted: $input_file → $output_file" "SUCCESS"
+        
+        if [[ "$OPTIMIZE" == true ]]; then
+            apply_optimizations "$output_file"
+        fi
+        
+        if [[ "$auto_remove" == "true" ]]; then
+            rm "$input_file"
+            log "Removed source file: $input_file" "INFO"
+        fi
+    else
+        log "Conversion failed: $input_file" "ERROR"
+        return 1
+    fi
+}
+
+# Find files to convert
 EXT_ARRAY=()
 if [[ -z "$INPUT_EXT" ]]; then
     for ext in "${VALID_FORMATS[@]}"; do
@@ -239,80 +331,37 @@ if [[ -z "$INPUT_EXT" ]]; then
         fi
     done
     if [[ ${#EXT_ARRAY[@]} -eq 0 ]]; then
-        echo -e "${YELLOW}⚠️ No image files found in current directory.${NC}"
+        log "No image files found in Input directory" "WARNING"
         exit 0
     fi
 else
     IFS=' ,;' read -ra EXT_ARRAY <<< "$(to_lowercase "$INPUT_EXT")"
     for ext in "${EXT_ARRAY[@]}"; do
         if ! is_valid_input_extension "$ext"; then
-            echo -e "${RED}Error:${NC} Invalid input extension '$ext'. Supported: ${VALID_FORMATS[*]}"
+            log "Invalid input extension '$ext'. Supported: ${VALID_FORMATS[*]}" "ERROR"
             exit 1
         fi
     done
 fi
 
-# If converting from PDF, check for Ghostscript
-if [[ " ${EXT_ARRAY[*]} " == *"pdf"* && "$OUTPUT_EXT" != "pdf" ]]; then
-    if ! command -v gs &>/dev/null; then
-        echo -e "${RED}Error:${NC} Ghostscript is required for PDF input. Aborting."
-        exit 1
-    fi
-fi
-
-declare -a processed_files=()
-
-# Start conversion
-echo -e "${CYAN}🔄 Converting files to .${OUTPUT_EXT} with quality ${QUALITY}...${NC}"
-shopt -s nullglob nocaseglob
-count=0
-
+# Process files in parallel
+log "Starting conversion with $MAX_PARALLEL_JOBS parallel jobs" "INFO"
 for ext in "${EXT_ARRAY[@]}"; do
-    for file in Input/*."$ext"; do
-        [[ -f "$file" ]] || continue
-        input=$(basename "$file" ".${input_ext}")
-        output="Output/${input}.${OUTPUT_EXT}"
-        # Check if the base filename already exists in the processed_files array
-        if [[ " ${processed_files[@]} " =~ " ${input} " ]]; then
-            # If it exists, silently skip this file
-            continue
-        fi
-
-        # Check if output file already exists
-        if [[ -f "$output" ]]; then
-            echo -e "${RED}❌ Skipping:${NC} file '$output' already exists."
-            processed_files+=("$input")
-            continue  # Skip this file and move to the next
-        fi
-        # Apply the filter if specified
-        filter_cmds=""
-        if [[ -n "$FILTER" ]]; then
-            echo -e "${YELLOW}⚙️  Applying filter(s):${NC} $FILTER"
-            filter_cmds=$(apply_filters "$FILTER")
-        fi
-
-        # Default conversion if no filter or enhancement is provided
-        echo -e "⚙️  ${YELLOW}Converting:${NC} \"$file\" → \"$output\""
-        if magick "$file" $filter_cmds "$output"; then
-            # Apply optimization if the flag is set
-            if $OPTIMIZE; then
-                echo -e "${YELLOW}⚙️  Applying Optimizations ${NC}"
-                apply_optimizations "$output"
-            fi
-            echo -e "${GREEN}✅ Converted:${NC} $file → $output"
-            ((count++))
-            if [[ $auto_remove = "true" ]]; then
-                echo -e "${GREEN}✅ Removed Source File:${NC} $file → $output"
-                rm "$file"
-            fi
-        else
-            echo -e "${RED}❌ Failed:${NC} $file"
-        fi
+    shopt -s nullglob nocaseglob
+    files=( Input/*."$ext" )
+    
+    for file in "${files[@]}"; do
+        # Wait if we've reached the maximum number of parallel jobs
+        while [[ $(jobs -r | wc -l) -ge $MAX_PARALLEL_JOBS ]]; do
+            sleep 1
+        done
+        
+        # Start conversion in background
+        convert_file "$file" &
     done
 done
 
-if [[ $count -eq 0 ]]; then
-    echo -e "${YELLOW}⚠️  No matching files were converted.${NC}"
-else
-    echo -e "${GREEN}🎉 Done! Converted $count file(s).${NC}"
-fi
+# Wait for all background jobs to complete
+wait
+
+log "All conversions complete" "SUCCESS"
