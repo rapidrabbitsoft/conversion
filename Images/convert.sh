@@ -282,6 +282,9 @@ if [[ -n "$FILTER" ]]; then
     fi
 fi
 
+# Change to script directory
+cd "$(dirname "$0")"
+
 # Check for required tools
 if ! command -v magick &> /dev/null; then
     log "ImageMagick 'magick' is not installed" "ERROR"
