@@ -96,6 +96,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Change to script directory
+cd "$(dirname "$0")"
+
 # Validate input
 if ! command -v pandoc &> /dev/null; then
     log "pandoc is not installed. Please install it first." "ERROR"
@@ -106,7 +109,7 @@ fi
 mkdir -p "Output"
 
 # Find files with the specified input extension
-IFS=$'\n' files=($(find "Input/" -type f -name "*.${input_ext}"))
+IFS=$'\n' files=($(find "Input" -type f -name "*.${input_ext}"))
 if [[ ${#files[@]} -eq 0 ]]; then
     log "No ${input_ext} files found in the Input directory." "WARNING"
     exit 0
